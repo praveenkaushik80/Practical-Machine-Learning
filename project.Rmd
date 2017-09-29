@@ -1,0 +1,137 @@
+---
+title: "PML-Project"
+author: "Praveen Kaushik"
+date: "September 29, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+## Executive Summary
+The project utilizes the Human Activity Recognition (HAR) dataset to predict quality of the weight lifting exercise being performed based on data from wearable accelerometers. A model utilizing random forest prediction with oob method from the wearable accelerometers performed well, with 99.4% accuracy from cross validation and 100% accuracy on the given test set of 20 items.
+
+## Introduction  
+Using devices such as Jawbone Up, Nike FuelBand, and Fitbit it is now possible to collect a large amount of data about personal activity relatively inexpensively. These type of devices are part of the quantified self movement - a group of enthusiasts who take measurements about themselves regularly to improve their health, to find patterns in their behavior, or because they are tech geeks. One thing that people regularly do is quantify how much of a particular activity they do, but they rarely quantify how well they do it.  
+
+In this project, we will use data from accelerometers on the belt, forearm, arm, and dumbell of 6 participants to predict the manner in which they did the exercise.  
+
+## Data Preprocessing  
+```{r, warning=FALSE}
+library(caret)
+library(randomForest)
+library(rpart)
+library(rpart.plot)
+library(corrplot)
+library(doParallel)
+registerDoParallel(cores=2)
+```
+### Downloading Data
+```{r, warning=FALSE}
+trainingUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testingUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+dir.create("./projectdata")
+trainingFile <- "./projectdata/pml-training.csv"
+testingFile  <- "./projectdata/pml-testing.csv"
+download.file(trainingUrl, destfile=trainingFile)
+download.file(testingUrl, destfile=testingFile)
+```  
+### Reading Data
+After downloading the data from the data source, we can read the two csv files into two data frames.  
+```{r}
+trainingRaw <- read.csv("./projectdata/pml-training.csv")
+testingRaw <- read.csv("./projectdata/pml-testing.csv")
+dim(trainingRaw)
+dim(testingRaw)
+```
+The "classe" variable in the training set is the outcome to predict. The training data set contains 19622 observations and 160 variables, while the testing data set contains 20 observations and 160 variables.
+
+### Cleaning data
+This step cleans the data and get rid of observations with missing values as well as some meaningless variables.
+```{r}
+sum(complete.cases(trainingRaw))
+```
+we remove columns that contain NA missing values both in testing and training.
+```{r}
+trainingRaw <- trainingRaw[, colSums(is.na(trainingRaw)) == 0] 
+testingRaw <- testingRaw[, colSums(is.na(testingRaw)) == 0] 
+```  
+Also, we get rid of some columns which does not contribute much to the accelerometer measurements.
+```{r}
+classe <- trainingRaw$classe
+trainingRemove <- grepl("^X|timestamp|window", names(trainingRaw))
+trainingRaw <- trainingRaw[, !trainingRemove]
+trainingCleaned <- trainingRaw[, sapply(trainingRaw, is.numeric)]
+trainingCleaned$classe <- classe
+testingRemove <- grepl("^X|timestamp|window", names(testingRaw))
+testingRaw <- testingRaw[, !testingRemove]
+testingCleaned <- testingRaw[, sapply(testingRaw, is.numeric)]
+dim(trainingCleaned)
+dim(testingCleaned)
+```
+The cleaned training data set contains 19622 observations and 53 variables, while the testing data set contains 20 observations and 53 variables. The "classe" variable is still in the cleaned training set.
+
+### Slicing data
+We split the cleaned training set into a pure training data set (70%) and a validation data set (30%). We will use the validation data set to conduct cross validation in future steps.  
+```{r}
+set.seed(8545)
+inTraining <- createDataPartition(trainingCleaned$classe, p=0.70, list=F)
+trainingData <- trainingCleaned[inTraining, ]
+testingData <- trainingCleaned[-inTraining, ]
+```
+
+## Data Modeling
+A predictive model for activity recognition is fitted using **Random Forest** algorithm because it automatically selects important variables and is robust to correlated covariates & outliers in general. We will use **out-of-bag (oob)** when applying the algorithm.  
+```{r}
+controlRF <- trainControl(verboseIter = TRUE, method="oob", seeds=NULL)
+modelRf <- train(classe ~ ., data=trainingData, method="rf", trControl=controlRF)
+modelRf
+```
+Later, we estimate the performance of the model on the validation data set.  
+```{r}
+predictRf <- predict(modelRf, testingData)
+confusionMatrix(testingData$classe, predictRf)
+```
+```{r}
+accuracy <- postResample(predictRf, testingData$classe)
+accuracy
+ose <- 1 - as.numeric(confusionMatrix(testingData$classe, predictRf)$overall[1])
+ose
+```
+The estimated accuracy of the model is 99.44% and the estimated out-of-sample error is 0.56%.
+
+## Prediction for Test Data Set
+We apply the model to the original testing data set downloaded from the data source. We remove the `problem_id` column first.  
+```{r}
+result <- predict(modelRf, testingCleaned[, -length(names(testingCleaned))])
+result
+```  
+
+## Conclusions
+
+Since the random forest model with the out-of-bag(oob) method optimized accuracy and speed. As anticipated, all 20 test cases were correctly predicted by this model (100% on Prediction Assignment Submission aspect of this project). Looking at variable importance (see Figure 4), the 52 predictors could be eventually trimmed down further. The roll and yaw of the belt appeared to be the most important predictors for quality of the exercise.
+
+## Appendix: Figures
+
+###1. Correlation Matrix Visualization  
+```{r}
+corrPlot <- cor(trainingData[, -length(names(trainingData))])
+corrplot(corrPlot, method="color")
+```
+
+###2. Decision Tree Visualization
+```{r}
+treeModel <- rpart(classe ~ ., data=trainingData, method="class")
+prp(treeModel)
+```
+
+###3. Model Fit
+```{r}
+plot(modelRf$finalModel, main="Model Fit")
+```
+
+###4. Variable Importance
+```{r}
+featImp <- varImp(modelRf)
+plot(featImp)
+```
